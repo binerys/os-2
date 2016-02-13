@@ -64,6 +64,8 @@ typedef struct osprd_info {
 
 	/* HINT: You may want to add additional fields to help
 	         in detecting deadlock. */
+	int read_locks; 
+	int write_locks;
 
 	// The following elements are used internally; you don't need
 	// to understand them.
@@ -119,8 +121,6 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 	// Read about 'struct request' in <linux/blkdev.h>.
 	// Consider the 'req->sector', 'req->current_nr_sectors', and
 	// 'req->buffer' members, and the rq_data_dir() function.
-
-	// Your code here.
 
 	// Check request type: 
 	unsigned int reqType =rq_data_dir(req);
@@ -241,6 +241,34 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// be protected by a spinlock; which ones?)
 
 		// Your code here (instead of the next two lines).
+		unsigned local_ticket;
+
+		// ****** Critical section
+		osp_spin_lock(&d->mutex);
+		local_ticket = d->ticket_head;
+		d->ticket_head++;
+		osp_spin_unlock(&d->mutex);
+		// ***********************
+		
+		switch(filp_writable)
+		{
+			case 0: /* OPENED FOR READING */
+				break;
+			default: /* OPENED FOR WRITING */
+				do
+				{
+					if(read_locks == 0 && write_locks == 0 && local_ticket <= ticket_tail)
+					{
+						// Give write lock 
+
+						// 
+					}
+					else
+						schedule();
+
+				} while(!(read_locks == 0 && write_locks == 0 && local_ticket == ticket_tail))
+
+		}
 		eprintk("Attempting to acquire\n");
 		r = -ENOTTY;
 
@@ -284,6 +312,8 @@ static void osprd_setup(osprd_info_t *d)
 	osp_spin_lock_init(&d->mutex);
 	d->ticket_head = d->ticket_tail = 0;
 	/* Add code here if you add fields to osprd_info_t. */
+	d->read_locks = 0;
+	d->write_locks = 0;
 }
 
 
