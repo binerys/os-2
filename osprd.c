@@ -121,8 +121,27 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 	// 'req->buffer' members, and the rq_data_dir() function.
 
 	// Your code here.
-	eprintk("Should process request...\n");
 
+	// Check request type: 
+	unsigned int reqType =rq_data_dir(req);
+
+	// Setup sector size and offset
+	unsigned long sectorOffset = req->sector * SECTOR_SIZE;
+	unsigned long numBytes = (req->current_nr_sectors)*SECTOR_SIZE;
+	// Process request
+	switch(reqType)
+	{
+		case READ:
+			memcpy((void*) req->buffer, (void*) d->data + sectorOffset, numBytes);
+			break;
+
+		case WRITE:
+			memcpy((void*) d->data + sectorOffset, (void*) req->buffer, numBytes);
+			break;
+
+		default:
+			break;
+	}
 	end_request(req, 1);
 }
 
