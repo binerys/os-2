@@ -171,18 +171,22 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		// as appropriate.
 
 		// Your code here.
-		switch (filp_writable)
+		osp_spin_lock(&d->mutex);
+		// Verify a lock exists:
+		if(filp->f_flags & F_OSPRD_LOCKED)
 		{
-			case 0: /* READ LOCK */
-				filp->f_flags ^= F_OSPRD_LOCKED;
-				d->read_locks--;
-				break;
-			default: /* WRITE LOCK */
-				filp->f_flags ^= F_OSPRD_LOCKED;
-				d->write_locks--;
+			switch (filp_writable)
+			{
+				case 0: /* READ LOCK */
+					filp->f_flags ^= F_OSPRD_LOCKED;
+					d->read_locks--;
+					break;
+				default: /* WRITE LOCK */
+					filp->f_flags ^= F_OSPRD_LOCKED;
+					d->write_locks--;
+			}
 		}
-
-
+		osp_spin_unlock(&d->mutex);
 		// This line avoids compiler warnings; you may remove it.
 		(void) filp_writable, (void) d;
 
@@ -264,6 +268,24 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		switch(filp_writable)
 		{
 			case 0: /* OPENED FOR READING */
+				do
+				{
+					if(d->write_locks == 0 && local_ticket <= d->ticket_tail)
+					{
+						// Give read lock
+						filp->f_flags |= F_OSPRD_LOCKED;
+						// Increment counters
+						osp_spin_lock(&d->mutex);
+						d->read_locks++;
+						d->ticket_tail++;
+						osp_spin_unlock(&d->mutex);
+
+						r=0;
+					}
+					else
+						schedule();
+
+				}while(d->write_locks != 0 && local_ticket > d->ticket_tail);
 				break;
 			default: /* OPENED FOR WRITING */
 				do
@@ -273,11 +295,12 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 						// Give write lock 
 						filp->f_flags |= F_OSPRD_LOCKED;
 						// Increment counters
+						osp_spin_lock(&d->mutex);
 						d->write_locks++;
 						d->ticket_tail++;
+						osp_spin_unlock(&d->mutex);
 
 						r = 0;
-						
 					}
 					else
 						schedule();
@@ -286,7 +309,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 		}
 		eprintk("Attempting to acquire\n");
-		r = -ENOTTY;
+		//r = -ENOTTY;
 
 	} else if (cmd == OSPRDIOCTRYACQUIRE) {
 
