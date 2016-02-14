@@ -81,6 +81,7 @@ typedef struct osprd_info {
 #define NOSPRD 4
 static osprd_info_t osprds[NOSPRD];
 
+// Declare useful helper functions
 /* ---------------------------------------*/
 // LIST.H WRAPPER FUNCTIONS:
 // 	IMPORTANT: Use read_list as head pointer
@@ -140,13 +141,6 @@ bool delete_node(pid_t cur_pid, struct list_head *head)
 	}
 	return false; 	
 }
-
-
-
-
-
-
-// Declare useful helper functions
 
 /*
  * file2osprd(filp)
