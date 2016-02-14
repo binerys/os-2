@@ -13,6 +13,7 @@
 #include <linux/blkdev.h>
 #include <linux/wait.h>
 #include <linux/file.h>
+#include <linux/list.h> /* for linked list implementation  */ 
 
 #include "spinlock.h"
 #include "osprd.h"
@@ -77,6 +78,34 @@ typedef struct osprd_info {
 
 #define NOSPRD 4
 static osprd_info_t osprds[NOSPRD];
+
+/* --------------------------------- */
+// LINKED LIST
+/*-------------------------------- */
+
+struct lock_list
+{
+	struct list_head list; // List structure from list 
+	pid_t pid; // pid associated with lock
+};
+int rl_count = 0 ;
+struct lock_list read_list; // Head of list for read locks 
+INIT_LIST_HEAD(&read_list.list); // Initialize head 
+
+void add_node(pid_t cur_pid, struct list_head *head)
+{
+	struct lock_list *tmp = (struct lock_list*) kmalloc(sizeof(struct lock_list), GFP_ATOMIC);
+	if(!tmp)
+		eprintk("Unable to allocate a new node for read_list\n");
+	tmp->pid = cur_pid;
+	INIT_LIST_HEAD(&tmp->list);
+	list_add(&tmp->list, head);
+	rl_count++;
+}
+
+
+
+
 
 
 // Declare useful helper functions
