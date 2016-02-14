@@ -171,6 +171,17 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		// as appropriate.
 
 		// Your code here.
+		switch (filp_writable)
+		{
+			case 0: /* READ LOCK */
+				filp->f_flags ^= F_OSPRD_LOCKED;
+				d->read_locks--;
+				break;
+			default: /* WRITE LOCK */
+				filp->f_flags ^= F_OSPRD_LOCKED;
+				d->write_locks--;
+		}
+
 
 		// This line avoids compiler warnings; you may remove it.
 		(void) filp_writable, (void) d;
@@ -257,16 +268,21 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			default: /* OPENED FOR WRITING */
 				do
 				{
-					if(read_locks == 0 && write_locks == 0 && local_ticket <= ticket_tail)
+					if(d->read_locks == 0 && d->write_locks == 0 && local_ticket <= d->ticket_tail)
 					{
 						// Give write lock 
+						filp->f_flags |= F_OSPRD_LOCKED
+						// Increment counters
+						d->write_locks++;
+						ticket_tail++
 
-						// 
+						r = 0;
+						
 					}
 					else
 						schedule();
 
-				} while(!(read_locks == 0 && write_locks == 0 && local_ticket == ticket_tail))
+				} while(d->read_locks != 0 && d->write_locks != 0 && local_ticket > d->ticket_tail)
 
 		}
 		eprintk("Attempting to acquire\n");
