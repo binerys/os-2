@@ -123,7 +123,7 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 	// 'req->buffer' members, and the rq_data_dir() function.
 
 	// Check request type: 
-	unsigned int reqType =rq_data_dir(req);
+	unsigned int reqType = rq_data_dir(req);
 
 	// Setup sector size and offset
 	unsigned long sectorOffset = req->sector * SECTOR_SIZE;
@@ -271,10 +271,10 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					if(d->read_locks == 0 && d->write_locks == 0 && local_ticket <= d->ticket_tail)
 					{
 						// Give write lock 
-						filp->f_flags |= F_OSPRD_LOCKED
+						filp->f_flags |= F_OSPRD_LOCKED;
 						// Increment counters
 						d->write_locks++;
-						ticket_tail++
+						ticket_tail++;
 
 						r = 0;
 						
@@ -282,7 +282,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					else
 						schedule();
 
-				} while(d->read_locks != 0 && d->write_locks != 0 && local_ticket > d->ticket_tail)
+				} while(d->read_locks != 0 && d->write_locks != 0 && local_ticket > d->ticket_tail);
 
 		}
 		eprintk("Attempting to acquire\n");
