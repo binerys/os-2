@@ -13,6 +13,7 @@
 #include <linux/blkdev.h>
 #include <linux/wait.h>
 #include <linux/file.h>
+#include <stdbool.h>
 
 #include "spinlock.h"
 #include "osprd.h"
@@ -65,7 +66,7 @@ typedef struct osprd_info {
 	/* HINT: You may want to add additional fields to help
 	         in detecting deadlock. */
 	int read_locks; 
-	int write_locks;
+	bool write_lock;
 
 	// The following elements are used internally; you don't need
 	// to understand them.
@@ -183,7 +184,7 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 					break;
 				default: /* WRITE LOCK */
 					filp->f_flags ^= F_OSPRD_LOCKED;
-					d->write_locks--;
+					d->write_lock = false;
 			}
 		}
 		osp_spin_unlock(&d->mutex);
@@ -270,7 +271,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			case 0: /* OPENED FOR READING */
 				do
 				{
-					if(d->write_locks == 0 && local_ticket <= d->ticket_tail)
+					if(d->write_lock == false && local_ticket <= d->ticket_tail)
 					{
 						// Give read lock
 						filp->f_flags |= F_OSPRD_LOCKED;
@@ -285,18 +286,18 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					else
 						schedule();
 
-				}while(d->write_locks != 0 && local_ticket > d->ticket_tail);
+				}while(d->write_lock == true && local_ticket > d->ticket_tail);
 				break;
 			default: /* OPENED FOR WRITING */
 				do
 				{
-					if(d->read_locks == 0 && d->write_locks == 0 && local_ticket <= d->ticket_tail)
+					if(d->read_locks == 0 && d->write_lock == false && local_ticket <= d->ticket_tail)
 					{
 						// Give write lock 
 						filp->f_flags |= F_OSPRD_LOCKED;
 						// Increment counters
 						osp_spin_lock(&d->mutex);
-						d->write_locks++;
+						d->write_lock = true;
 						d->ticket_tail++;
 						osp_spin_unlock(&d->mutex);
 
@@ -305,7 +306,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					else
 						schedule();
 
-				} while(d->read_locks != 0 && d->write_locks != 0 && local_ticket > d->ticket_tail);
+				} while(d->read_locks != 0 && d->write_lock == true && local_ticket > d->ticket_tail);
 
 		}
 		eprintk("Attempting to acquire\n");
@@ -352,7 +353,7 @@ static void osprd_setup(osprd_info_t *d)
 	d->ticket_head = d->ticket_tail = 0;
 	/* Add code here if you add fields to osprd_info_t. */
 	d->read_locks = 0;
-	d->write_locks = 0;
+	d->write_lock = false;
 }
 
 
