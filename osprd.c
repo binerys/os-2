@@ -81,18 +81,25 @@ typedef struct osprd_info {
 #define NOSPRD 4
 static osprd_info_t osprds[NOSPRD];
 
-/* --------------------------------- */
-// LINKED LIST
-/*-------------------------------- */
+/* ---------------------------------------*/
+// LIST.H WRAPPER FUNCTIONS:
+// 	IMPORTANT: Use read_list as head pointer
+// 	add_node(cur_pid,head): add's a node with
+// 		the current pid
+// 	find_node(cur_pid,head): returns true if
+// 		cur_pid exists in list
+// 	delete_node(cur_pid,head): delete's node
+// 		containing cur_pid
+/*-----------------------------------------*/
 
 struct lock_list
 {
 	struct list_head list; // List structure from list 
 	pid_t pid; // pid associated with lock
 };
-int rl_count = 0 ;
-struct lock_list read_list; // Head of list for read locks 
-INIT_LIST_HEAD(&read_list.list); // Initialize head 
+
+struct list_head read_list; // Head of list for read locks
+LIST_HEAD(read_list); // Initialize head 
 
 void add_node(pid_t cur_pid, struct list_head *head)
 {
@@ -102,7 +109,36 @@ void add_node(pid_t cur_pid, struct list_head *head)
 	tmp->pid = cur_pid;
 	INIT_LIST_HEAD(&tmp->list);
 	list_add(&tmp->list, head);
-	rl_count++;
+}
+
+bool find_node(pid_t cur_pid, struct list_head *head)
+{
+	struct list_head *ptr; 
+	struct lock_list *obj; 
+	list_for_each(ptr,head)
+	{
+		obj = list_entry(ptr, struct lock_list, list);
+		if(obj->pid == cur_pid)
+			return true; 
+	}
+	return false; 
+}
+
+bool delete_node(pid_t cur_pid, struct list_head *head)
+{
+	struct list_head *ptr; 
+	struct list_head *next_ptr;
+	struct lock_list *obj; 
+	list_for_each_safe(ptr,next_ptr,head){
+		obj = list_entry(ptr, struct lock_list, list);
+		if(obj->pid == cur_pid)
+		{
+			list_del(&obj->list);
+			kfree(obj);
+			return true;
+		}		
+	}
+	return false; 	
 }
 
 

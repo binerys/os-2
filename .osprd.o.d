@@ -222,4 +222,5 @@ osprd.o: /media/sf_lab2/osprd.c include/linux/autoconf.h \
  include/asm-generic/iomap.h include/linux/bsg.h \
  /usr/src/linux-headers-2.6.32-24-generic/arch/x86/include/asm/scatterlist.h \
  include/asm-generic/scatterlist.h include/linux/elevator.h \
- include/linux/file.h /media/sf_lab2/spinlock.h /media/sf_lab2/osprd.h
+ include/linux/file.h /usr/lib/gcc/i486-linux-gnu/4.4.3/include/stdbool.h \
+ /media/sf_lab2/spinlock.h /media/sf_lab2/osprd.h
