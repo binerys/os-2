@@ -274,7 +274,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 						filp->f_flags |= F_OSPRD_LOCKED;
 						// Increment counters
 						d->write_locks++;
-						ticket_tail++;
+						d->ticket_tail++;
 
 						r = 0;
 						
