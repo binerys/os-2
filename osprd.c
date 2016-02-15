@@ -200,7 +200,7 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 			memcpy((void*) d->data + sectorOffset, (void*) req->buffer, numBytes);
 			break;
 
-		default:
+		default: //end_request(reg, 0)?
 			break;
 	}
 	end_request(req, 1);
@@ -232,6 +232,12 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		// as appropriate.
 
 		// Your code here.
+
+		if (d == NULL) 
+		{
+			return 1;
+		}
+
 		osp_spin_lock(&d->mutex);
 		// Verify a lock exists:
 		if(filp->f_flags & F_OSPRD_LOCKED)
@@ -239,15 +245,26 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 			switch (filp_writable)
 			{
 				case 0: /* READ LOCK */
-					filp->f_flags ^= F_OSPRD_LOCKED;
-					d->read_locks--;
+					if (delete_node(current -> pid, read_list))
+					{
+						//but other read locks could still exist?
+						filp->f_flags ^= F_OSPRD_LOCKED;
+						d->read_locks--;
+					}
+					else
+					{
+						osp_spin_unlock(&d->mutex);
+						//BURRITO retrun what?
+					}
 					break;
 				default: /* WRITE LOCK */
+					//BURRITO just need to delete one node, right? - do we even keep track of it?
 					filp->f_flags ^= F_OSPRD_LOCKED;
 					d->write_lock = false;
 			}
 		}
 		osp_spin_unlock(&d->mutex);
+		wake_up_all(&d->blockq);
 		// This line avoids compiler warnings; you may remove it.
 		(void) filp_writable, (void) d;
 
@@ -333,10 +350,19 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				{
 					if(d->write_lock == false && local_ticket <= d->ticket_tail)
 					{
+						osp_spin_lock(&d->mutex);
+
+						if (find_node(current->pid, read_list))
+						{
+							osp_spin_unlock(&d->mutex);
+							//BURRITO what do return
+						}				
+
+						//BURRITO check if has write lock - have to wait		
+
 						// Give read lock
 						filp->f_flags |= F_OSPRD_LOCKED;
 						// Increment counters
-						osp_spin_lock(&d->mutex);
 						d->read_locks++;
 						d->ticket_tail++;
 						osp_spin_unlock(&d->mutex);
@@ -353,10 +379,18 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				{
 					if(d->read_locks == 0 && d->write_lock == false && local_ticket <= d->ticket_tail)
 					{
+						osp_spin_lock(&d->mutex);
+
+						if (find_node(current->pid, read_list))                                                                                       { 
+                                                        osp_spin_unlock(&d->mutex);
+                                                        //BURRITO what do return
+                                                } 
+
+                                                //BURRITO check if has write lock - have to wait     
+
 						// Give write lock 
 						filp->f_flags |= F_OSPRD_LOCKED;
 						// Increment counters
-						osp_spin_lock(&d->mutex);
 						d->write_lock = true;
 						d->ticket_tail++;
 						osp_spin_unlock(&d->mutex);
