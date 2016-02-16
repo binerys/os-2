@@ -270,7 +270,8 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 			memcpy((void*) d->data + sectorOffset, (void*) req->buffer, numBytes);
 			break;
 
-		default: //end_request(reg, 0)?
+		default:
+			end_request(req, 0);
 			break;
 	}
 	end_request(req, 1);
@@ -311,22 +312,21 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		// Verify a lock exists:
 		if(filp->f_flags & F_OSPRD_LOCKED)
 		{
-			/* Check if a read lock exists */
-			if (delete_lock(current->pid, d->read_list))
-			{	
-				d->read_locks--;
-			}
-			else
+			/* Check if a read or write lock exists */
+			if (!find_lock(current->pid, d->read_list) && !find_lock(current->pid, d->write_list))
 			{
 				osp_spin_unlock(&d->mutex);
 				return -EINVAL;
-			}
-
-			/* TACO Check if write lock exists */
+			}		
+	
+			delete_lock(current->pid, d->read_list);
+			delete_lock(current->pid, d->write_list);
 			
-			/* TACO Undo lock only if no read locks and write locks exist */
+			/* Undo lock only if no read locks and write locks exist */
+			if (!list_empty(d->read_list) && !list_empty(d->write_list))
+			{
 				filp->f_flags ^= F_OSPRD_LOCKED;
-			d->write_lock = false;
+			}
 		}
 		osp_spin_unlock(&d->mutex);
 		wake_up_all(&d->blockq);
