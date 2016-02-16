@@ -126,16 +126,6 @@ void add_lock(pid_t cur_pid, struct list_head *head)
 	list_add(&tmp->list, head);
 }
 
-void add_ticket(unsigned cur_ticket, struct list_head *head)
-{
-	struct ticket_list *tmp = (struct ticket_list*) kmalloc(sizeof(struct ticket_list), GFP_ATOMIC);
-	if(!tmp)
-		eprintk("Unable to allocate a new node for read_list\n");
-	tmp->ticket = cur_ticket;
-	INIT_LIST_HEAD(&tmp->list);
-	list_add(&tmp->list, head);
-}
-
 bool find_lock(pid_t cur_pid, struct list_head *head)
 {
 	struct list_head *ptr; 
@@ -148,20 +138,6 @@ bool find_lock(pid_t cur_pid, struct list_head *head)
 	}
 	return false; 
 }
-
-bool find_ticket(unsigned cur_ticket, struct list_head *head)
-{
-	struct list_head *ptr; 
-	struct ticket_list *obj; 
-	list_for_each(ptr,head)
-	{
-		obj = list_entry(ptr, struct ticket_list, list);
-		if(obj->ticket == cur_ticket)
-			return true; 
-	}
-	return false; 
-}
-
 
 bool delete_lock(pid_t cur_pid, struct list_head *head)
 {
@@ -189,53 +165,6 @@ void reset_locks(struct list_head *head)
 			obj = list_entry(ptr, struct lock_list, list);
 			list_del(&obj->list);
 			kfree(obj);	
-	}
-}
-void reset_tickets(struct list_head *head)
-{
-	struct list_head *ptr; 
-	struct list_head *next_ptr; 
-	struct ticket_list *obj;
-	list_for_each_safe(ptr,next_ptr,head){
-			obj = list_entry(ptr, struct ticket_list, list);
-			list_del(&obj->list);
-			kfree(obj);	
-	}
-}
-
-
-bool delete_ticket(unsigned cur_ticket, struct list_head *head)
-{
-	struct list_head *ptr; 
-	struct list_head *next_ptr;
-	struct ticket_list *obj; 
-	list_for_each_safe(ptr,next_ptr,head){
-		obj = list_entry(ptr, struct ticket_list, list);
-		if(obj->ticket == cur_ticket)
-		{
-			list_del(&obj->list);
-			kfree(obj);
-			return true;
-		}		
-	}
-	return false; 	
-}
-
-void updateTicketTail(osprd_info_t *d)
-{
-	d->ticket_tail++;	
-	while(d->ticket_tail)
-	{
-		eprintk("Incrementing ticket: %d \n", d->ticket_tail);
-		if(find_ticket(d->ticket_tail, d->ticket_list))
-		{
-			delete_ticket(d->ticket_tail, d->ticket_list);
-		}
-		else
-		{
-			break;
-		}
-		d->ticket_tail++;
 	}
 }
 
@@ -403,16 +332,12 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				}
 	        	osp_spin_unlock(&d->mutex);
 
-	        	eprintk("Local ticket is (reading): %d \n",local_ticket);
-	        	eprintk("Ticket tail is (reading): %d \n", d->ticket_tail);
-
 				/* Perform blocking */
 				if(wait_event_interruptible(d->blockq, 
 				list_empty(d->write_list) && 
 				(local_ticket == d->ticket_tail)
 				))
-				{	
-					eprintk("Handling a signal!\n");
+				{
 					/* Handle signals */
 					osp_spin_lock(&d->mutex);
 					if(local_ticket == d->ticket_tail){
@@ -454,10 +379,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 	            	return -EDEADLK;
 	            }
 
-	            osp_spin_unlock(&d->mutex);
-
-	            eprintk("Local ticket is (writing): %d \n",local_ticket);
-	            eprintk("Ticket tail is (writing): %d \n", d->ticket_tail);	
+	            osp_spin_unlock(&d->mutex);	
 
 	            /* Perform blocking */
 				if(wait_event_interruptible(d->blockq, 
@@ -494,7 +416,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		d->ticket_tail++;
 		osp_spin_unlock(&d->mutex);
 		wake_up_all(&d->blockq);
-		eprintk("Attempting to acquire\n");
 	} else if (cmd == OSPRDIOCTRYACQUIRE) {
 
 		// EXERCISE: ATTEMPT to lock the ramdisk.
@@ -551,7 +472,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
         osp_spin_unlock(&d->mutex);
         //wake_up_all(&d->blockq);
         r = 0;	
-		eprintk("Attempting to try acquire\n");
 		//r = -ENOTTY;
 
 	} else if (cmd == OSPRDIOCRELEASE) {
