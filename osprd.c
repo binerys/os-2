@@ -631,16 +631,16 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				}
 				
 				/* Give write lock */
-                                osp_spin_lock(&d->mutex);
-                                // Grant lock 
-                                filp->f_flags |= F_OSPRD_LOCKED;
-                                // Add to list
-                                add_lock(current->pid, d->read_list);
-                                /* Update ticket tail */
-                                updateTicketTail(d);
-                                osp_spin_unlock(&d->mutex);
-                                wake_up_all(&d->blockq);
-                                r = 0;				
+                osp_spin_lock(&d->mutex);
+                // Grant lock 
+                filp->f_flags |= F_OSPRD_LOCKED;
+                // Add to list
+                add_lock(current->pid, d->read_list);
+                /* Update ticket tail */
+                updateTicketTail(d);
+                osp_spin_unlock(&d->mutex);
+                wake_up_all(&d->blockq);
+                r = 0;				
 
 				break;	
 		}		
