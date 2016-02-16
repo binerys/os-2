@@ -245,7 +245,7 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 			switch (filp_writable)
 			{
 				case 0: /* READ LOCK */
-					if (delete_node(current -> pid, read_list))
+					if (delete_node(current -> pid, &read_list))
 					{
 						//but other read locks could still exist?
 						filp->f_flags ^= F_OSPRD_LOCKED;
@@ -352,7 +352,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					{
 						osp_spin_lock(&d->mutex);
 
-						if (!find_node(current->pid, read_list))
+						if (!find_node(current->pid, &read_list))
 						{
 							osp_spin_unlock(&d->mutex);
 							//BURRITO what do return
@@ -381,7 +381,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					{
 						osp_spin_lock(&d->mutex);
 
-						if (!find_node(current->pid, read_list))
+						if (!find_node(current->pid, &read_list))
 						{ 
                                                         osp_spin_unlock(&d->mutex);
                                                         //BURRITO what do return
@@ -432,14 +432,14 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Your code here (instead of the next line).
 		osp_spin_lock(&d->mutex);
 
-		if (!find_node(current->pid, read_list))
+		if (!find_node(current->pid, &read_list))
                 {
                 	osp_spin_unlock(&d->mutex);
                         //BURRITO what do return
                 }
                 //BURRITO check if has write lock - have to wait  
 		
-		delete_node(current->pid, read_list);
+		delete_node(current->pid, &read_list);
 		//BURRITO - delete out of write list
 
 		if (d->read_locks == 0 && d->write_lock == false)
