@@ -419,11 +419,17 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				{	
 					eprintk("Handling a signal!\n");
 					/* Handle signals */
-					if(local_ticket == d->ticket_tail)
-						updateTicketTail(d);
-					else
-						add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
-
+					osp_spin_lock(&d->mutex);
+					if(local_ticket == d->ticket_tail){
+						//updateTicketTail(d);
+						d->ticket_tail++;
+						wake_up_all(&d->blockq);
+					}
+					else{
+						// add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
+						d->ticket_head--;
+					}
+					osp_spin_unlock(&d->mutex);
 					return -ERESTARTSYS;
 				}
 				/* Give read lock */
@@ -466,10 +472,18 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				))
 				{	
 					/* Handle signals */
-					if(local_ticket == d->ticket_tail)
-						updateTicketTail(d);
+					osp_spin_lock(&d->mutex);
+					if(local_ticket == d->ticket_tail){
+						//updateTicketTail(d);
+						d->ticket_tail++;
+						wake_up_all(&d->blockq);
+					}
 					else
-						add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
+					{
+						// add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
+						d->ticket_head--;
+					}
+					osp_spin_unlock(&d->mutex);
 					return -ERESTARTSYS;
 				}
 
@@ -498,17 +512,17 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Your code here (instead of the next two lines).
 		/* Obtain a ticket */
         // Obtain a ticket
-
+		/*
 		osp_spin_lock(&d->mutex);
         local_ticket = d->ticket_head;
         d->ticket_head++;
         osp_spin_unlock(&d->mutex);
-              
+         */
 		switch(filp_writable)
 		{
 			case 0: /* OPENED FOR READING */
 
-				if ((d->ticket_tail == local_ticket) && list_empty(d->read_list))
+				if (list_empty(d->write_list) && !find_lock(current->pid, d->read_list))
 				{
 					/* Give read lock */
                		 osp_spin_lock(&d->mutex);
@@ -517,14 +531,14 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				}
 				else
 				{
-					if(d->ticket_tail == local_ticket)
-						updateTicketTail(d);
+					/*if(d->ticket_tail == local_ticket)
+						updateTicketTail(d);*/
 					return -EBUSY;
 				}
 
 				break;
 			default: /* WRITING */
-				if ((d->ticket_tail == local_ticket) && list_empty(d->read_list) && list_empty(d->write_list))
+				if (list_empty(d->read_list) && list_empty(d->write_list))
 				{
 					/* Give write lock */
                		 osp_spin_lock(&d->mutex);
@@ -533,14 +547,14 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				}
 				else
 				{
-					if(d->ticket_tail == local_ticket)
-						updateTicketTail(d);
+					/*if(d->ticket_tail == local_ticket)
+						updateTicketTail(d);*/
 					return -EBUSY;
 				}
 		}		
-        updateTicketTail(d);
+        // updateTicketTail(d);
         osp_spin_unlock(&d->mutex);
-        wake_up_all(&d->blockq);
+        //wake_up_all(&d->blockq);
         r = 0;	
 		eprintk("Attempting to try acquire\n");
 		//r = -ENOTTY;
