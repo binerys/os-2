@@ -180,6 +180,30 @@ bool delete_lock(pid_t cur_pid, struct list_head *head)
 	return false; 	
 }
 
+void reset_locks(struct list_head *head)
+{
+	struct list_head *ptr; 
+	struct list_head *next_ptr; 
+	struct lock_list *obj;
+	list_for_each_safe(ptr,next_ptr,head){
+			obj = list_entry(ptr, struct lock_list, list);
+			list_del(&obj->list);
+			kfree(obj);	
+	}
+}
+void reset_tickets(struct list_head *head)
+{
+	struct list_head *ptr; 
+	struct list_head *next_ptr; 
+	struct ticket_list *obj;
+	list_for_each_safe(ptr,next_ptr,head){
+			obj = list_entry(ptr, struct ticket_list, list);
+			list_del(&obj->list);
+			kfree(obj);	
+	}
+}
+
+
 bool delete_ticket(unsigned cur_ticket, struct list_head *head)
 {
 	struct list_head *ptr; 
@@ -199,9 +223,10 @@ bool delete_ticket(unsigned cur_ticket, struct list_head *head)
 
 void updateTicketTail(osprd_info_t *d)
 {
-	d->ticket_tail++;
+	d->ticket_tail++;	
 	while(d->ticket_tail)
 	{
+		eprintk("Incrementing ticket: %d \n", d->ticket_tail);
 		if(find_ticket(d->ticket_tail, d->ticket_list))
 		{
 			delete_ticket(d->ticket_tail, d->ticket_list);
@@ -212,32 +237,6 @@ void updateTicketTail(osprd_info_t *d)
 		}
 		d->ticket_tail++;
 	}
-}
-
-/*
-* block(d)
-* 	Given a device d, block until conditions are met.
-* 	If condition fails and a signal is caught, return -ERESTARTSYS
-* 	Else, return 0.
-*/
-int block(osprd_info_t *d, unsigned local_ticket)
-{
-	if(wait_event_interruptible(d->blockq, 
-	(list_empty(d->write_list) && 
-	list_empty(d->read_list) && 
-	(local_ticket == d->ticket_tail)) 
-	== -ERESTARTSYS
-	))
-	{	
-		/* Handle signals */
-		if(local_ticket == d->ticket_tail)
-			updateTicketTail(d);
-		else
-			add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
-
-		return -ERESTARTSYS;
-	}
-	return 0;
 }
 
 /*
@@ -341,6 +340,7 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		if(filp->f_flags & F_OSPRD_LOCKED)
 		{
 			/* Check if a read or write lock exists */
+			/*
 			if (!find_lock(current->pid, d->read_list) && !find_lock(current->pid, d->write_list))
 			{
 				osp_spin_unlock(&d->mutex);
@@ -350,11 +350,19 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 			delete_lock(current->pid, d->read_list);
 			delete_lock(current->pid, d->write_list);
 			
-			/* Undo lock only if no read locks and write locks exist */
-			if (!list_empty(d->read_list) && !list_empty(d->write_list))
+			// Undo lock only if no read locks and write locks exist
+			if (list_empty(d->read_list) && list_empty(d->write_list))
 			{
 				filp->f_flags ^= F_OSPRD_LOCKED;
 			}
+			*/
+			filp->f_flags ^= F_OSPRD_LOCKED;
+			if(list_empty(d->write_list))
+				reset_locks(d->write_list);
+			if(list_empty(d->read_list))
+				reset_locks(d->read_list);
+			if(list_empty(d->ticket_list))
+				reset_tickets(d->ticket_list);
 		}
 		osp_spin_unlock(&d->mutex);
 		wake_up_all(&d->blockq);
@@ -427,83 +435,91 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 		// Your code here (instead of the next two lines).
 
-		/* Obtain a ticket */
-		unsigned local_ticket;
-		// Obtain a ticket
-		osp_spin_lock(&d->mutex);
-		// ****** Critical section
-		local_ticket = d->ticket_head;
-		d->ticket_head++;
-		// ***********************
-		osp_spin_unlock(&d->mutex); //  [*] MIGHT NOT BE SAFE 
 		
+		// ***********************
+		//osp_spin_unlock(&d->mutex); //  [*] MIGHT NOT BE SAFE 
+		unsigned local_ticket;
 		switch(filp_writable)
 		{
 			case 0: /* OPENED FOR READING */
 		
-				if(list_empty(d->write_list) && local_ticket <= d->ticket_tail)
+				// osp_spin_lock(&d->mutex);
+				/* Obtain a ticket */
+				
+				// Obtain a ticket
+				osp_spin_lock(&d->mutex);
+				// ****** Critical section
+				local_ticket = d->ticket_head;
+				d->ticket_head++;
+				/* Check if I'm requesting the same read lock*/
+				if (find_lock(current->pid, d->read_list)) 
 				{
-					// osp_spin_lock(&d->mutex);
-					
-					/* Check if I'm requesting the same read lock*/
-					if (find_lock(current->pid, d->read_list)) 
-					{
-						// Uncomment if i remove [*] osp_spin_unlock(&d->mutex);
-						return -EDEADLK; 
-					}
-							
-					/* Check if I'm requesting a write lock */	
-					if (find_lock(current->pid, d->write_list))
-					{
-						// osp_spin_unlock(&d->mutex);
-						return -EDEADLK;
-					}
-
-					/* Perform blocking */
-					if(wait_event_interruptible(d->blockq, 
-					list_empty(d->write_list) && 
-					list_empty(d->read_list) && 
-					(local_ticket == d->ticket_tail)
-					))
-					{	
-						/* Handle signals */
-						if(local_ticket == d->ticket_tail)
-							updateTicketTail(d);
-						else
-							add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
-
-						return -ERESTARTSYS;
-					}
-					/* Give read lock */
-					osp_spin_lock(&d->mutex);
-					// Grant lock 
-					filp->f_flags |= F_OSPRD_LOCKED; 
-					// Add to list
-					add_lock(current->pid, d->read_list);
-					/* Update ticket tail */
-					updateTicketTail(d);
 					osp_spin_unlock(&d->mutex);
-					wake_up_all(&d->blockq);
-					r=0;
+					return -EDEADLK; 
 				}
+						
+				/* Check if I'm requesting a write lock */	
+				if (find_lock(current->pid, d->write_list))
+				{
+					osp_spin_unlock(&d->mutex);
+					return -EDEADLK;
+				}
+	        	eprintk("Local ticket is (reading): %d \n",local_ticket);
+	        	eprintk("Ticket tail is (reading): %d \n", d->ticket_tail);
+	        	osp_spin_unlock(&d->mutex);
+				/* Perform blocking */
+				if(wait_event_interruptible(d->blockq, 
+				list_empty(d->write_list) && 
+				list_empty(d->read_list) && 
+				(local_ticket == d->ticket_tail)
+				))
+				{	
+					eprintk("Handling a signal!\n");
+					/* Handle signals */
+					if(local_ticket == d->ticket_tail)
+						updateTicketTail(d);
+					else
+						add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
+
+					return -ERESTARTSYS;
+				}
+				/* Give read lock */
+				osp_spin_lock(&d->mutex);
+				// Grant lock 
+				filp->f_flags |= F_OSPRD_LOCKED; 
+				// Add to list
+				add_lock(current->pid, d->read_list);
+				/* Update ticket tail */
+				updateTicketTail(d);
+				osp_spin_unlock(&d->mutex);
+				wake_up_all(&d->blockq);
+				r=0;
+				
 				break;
 
 			default: /* OPENED FOR WRITING */
+				/* Obtain a ticket */				
+				osp_spin_lock(&d->mutex);
+				// ****** Critical section
+				local_ticket = d->ticket_head;
+				d->ticket_head++;
 
 				/* Check if I'm requesting a read lock */
 				if (find_lock(current->pid, d->read_list)) 
 				{ 
-	                // osp_spin_unlock(&d->mutex);
+	                osp_spin_unlock(&d->mutex);
 	                return -EDEADLK; 
 	            } 
 
 	            /* Check if I'm requesting the same write lock */  
 	            if (find_lock(current->pid, d->write_list))
 	            {
-	            	// osp_spin_unlock (&d->mutex);
+	            	osp_spin_unlock (&d->mutex);
 	            	return -EDEADLK;
 	            }
-
+	            eprintk("Local ticket is (writing): %d \n",local_ticket);
+	            eprintk("Ticket tail is (writing): %d \n", d->ticket_tail);
+	            osp_spin_unlock(&d->mutex);
 	            /* Perform blocking */
 				if(wait_event_interruptible(d->blockq, 
 				list_empty(d->write_list) && 
@@ -557,7 +573,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 		// Your code here (instead of the next line).
 		osp_spin_lock(&d->mutex);
-
+		/*
 		if (!find_lock(current->pid, d->read_list) && !find_lock(current->pid, d->write_list))
         	{
         		osp_spin_unlock(&d->mutex);
@@ -571,9 +587,21 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		{
 			filp->f_flags ^= F_OSPRD_LOCKED;
 		}		
-
+		*/
+		if(!(filp->f_flags & F_OSPRD_LOCKED))
+			return -EINVAL;
+		switch(filp_writable)
+		{
+			case 0: /* READABLE */
+				delete_lock(current->pid, d->read_list);
+				break;
+			default: /* WRITER */
+				delete_lock(current->pid, d->write_list);
+		}
+		filp->f_flags ^= F_OSPRD_LOCKED;
 		osp_spin_unlock(&d->mutex);
 		wake_up_all(&d->blockq);
+		r = 0;
 
 	} else
 		r = -ENOTTY; /* unknown command */
