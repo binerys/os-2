@@ -53,12 +53,6 @@ struct lock_list
 	pid_t pid; // pid associated with lock
 };
 
-struct ticket_list
-{
-	struct list_head list; // List structure from list
-	unsigned ticket; // Ticket number
-};
-
 /* The internal representation of our device. */
 typedef struct osprd_info {
 	uint8_t *data;                  // The data array. Its size is
@@ -82,12 +76,12 @@ typedef struct osprd_info {
 	/* Lock Lists and Ticket Lists */
 	struct lock_list read_list_t; // List of read locks
 	struct lock_list write_list_t; // List of write locks
-	struct ticket_list ticket_list_t; // List of trashed tickets
+	
 
 	/* Head pointers */
 	struct list_head* read_list; 
 	struct list_head* write_list;
-	struct list_head* ticket_list; 
+	
 
 	// The following elements are used internally; you don't need
 	// to understand them.
@@ -112,8 +106,6 @@ static osprd_info_t osprds[NOSPRD];
 // 		containing cur_pid
 // 	list_empty(head): function defined by
 // 		list.h.
-// 	updateTicketTail(d): updates ticket tail to next
-// 		available ticket
 /*-----------------------------------------*/
 
 void add_lock(pid_t cur_pid, struct list_head *head)
@@ -156,17 +148,6 @@ bool delete_lock(pid_t cur_pid, struct list_head *head)
 	return false; 	
 }
 
-void reset_locks(struct list_head *head)
-{
-	struct list_head *ptr; 
-	struct list_head *next_ptr; 
-	struct lock_list *obj;
-	list_for_each_safe(ptr,next_ptr,head){
-			obj = list_entry(ptr, struct lock_list, list);
-			list_del(&obj->list);
-			kfree(obj);	
-	}
-}
 
 /*
  * file2osprd(filp)
@@ -341,12 +322,11 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					/* Handle signals */
 					osp_spin_lock(&d->mutex);
 					if(local_ticket == d->ticket_tail){
-						//updateTicketTail(d);
+						
 						d->ticket_tail++;
 						wake_up_all(&d->blockq);
 					}
 					else{
-						// add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
 						d->ticket_head--;
 					}
 					osp_spin_unlock(&d->mutex);
@@ -391,13 +371,11 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					/* Handle signals */
 					osp_spin_lock(&d->mutex);
 					if(local_ticket == d->ticket_tail){
-						//updateTicketTail(d);
 						d->ticket_tail++;
 						wake_up_all(&d->blockq);
 					}
 					else
 					{
-						// add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
 						d->ticket_head--;
 					}
 					osp_spin_unlock(&d->mutex);
@@ -412,7 +390,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		}
 		// Change to locked
 		filp->f_flags |= F_OSPRD_LOCKED;
-		// Update ticket tail
 		d->ticket_tail++;
 		osp_spin_unlock(&d->mutex);
 		wake_up_all(&d->blockq);
@@ -426,14 +403,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Otherwise, if we can grant the lock request, return 0.
 
 		// Your code here (instead of the next two lines).
-		/* Obtain a ticket */
-        // Obtain a ticket
-		/*
-		osp_spin_lock(&d->mutex);
-        local_ticket = d->ticket_head;
-        d->ticket_head++;
-        osp_spin_unlock(&d->mutex);
-         */
+
 		switch(filp_writable)
 		{
 			case 0: /* OPENED FOR READING */
@@ -447,8 +417,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				}
 				else
 				{
-					/*if(d->ticket_tail == local_ticket)
-						updateTicketTail(d);*/
 					return -EBUSY;
 				}
 
@@ -463,14 +431,10 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				}
 				else
 				{
-					/*if(d->ticket_tail == local_ticket)
-						updateTicketTail(d);*/
 					return -EBUSY;
 				}
 		}		
-        // updateTicketTail(d);
         osp_spin_unlock(&d->mutex);
-        //wake_up_all(&d->blockq);
         r = 0;	
 		//r = -ENOTTY;
 
@@ -524,11 +488,10 @@ static void osprd_setup(osprd_info_t *d)
 	/* Add code here if you add fields to osprd_info_t. */	
 	INIT_LIST_HEAD(&d->read_list_t.list);
 	INIT_LIST_HEAD(&d->write_list_t.list);
-	INIT_LIST_HEAD(&d->ticket_list_t.list);
-
+	
 	d->read_list=&d->read_list_t.list;
 	d->write_list=&d->write_list_t.list;
-	d->ticket_list=&d->ticket_list_t.list;
+	
 }
 
 
