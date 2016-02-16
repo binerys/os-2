@@ -325,17 +325,11 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		osprd_info_t *d = file2osprd(filp);
 		int filp_writable = filp->f_mode & FMODE_WRITE;
 
-		// EXERCISE: If the user closes a ramdisk file that holds
-		// a lock, release the lock.  Also wake up blocked processes
-		// as appropriate.
-
-		// Your code here.
 		if (d == NULL) 
 		{
 			return 1;
 		}
 
-		
 		// Verify a lock exists:
 		if(filp->f_flags & F_OSPRD_LOCKED)
 		{
@@ -343,9 +337,10 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 
 			delete_lock(current->pid, d->read_list);
 			delete_lock(current->pid, d->write_list);
-			osp_spin_unlock(&d->mutex);
 
 			filp->f_flags &= ~F_OSPRD_LOCKED;
+			osp_spin_unlock(&d->mutex);
+
 			wake_up_all(&d->blockq);
 		}
 
@@ -496,7 +491,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Change to locked
 		filp->f_flags |= F_OSPRD_LOCKED;
 		// Update ticket tail
-		updateTicketTail(d);
+		d->ticket_tail++;
 		osp_spin_unlock(&d->mutex);
 		wake_up_all(&d->blockq);
 		eprintk("Attempting to acquire\n");
