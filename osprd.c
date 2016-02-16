@@ -352,7 +352,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					{
 						osp_spin_lock(&d->mutex);
 
-						if (find_node(current->pid, read_list))
+						if (!find_node(current->pid, read_list))
 						{
 							osp_spin_unlock(&d->mutex);
 							//BURRITO what do return
@@ -381,7 +381,8 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					{
 						osp_spin_lock(&d->mutex);
 
-						if (find_node(current->pid, read_list))                                                                                       { 
+						if (!find_node(current->pid, read_list))
+						{ 
                                                         osp_spin_unlock(&d->mutex);
                                                         //BURRITO what do return
                                                 } 
@@ -429,7 +430,26 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// you need, and return 0.
 
 		// Your code here (instead of the next line).
-		r = -ENOTTY;
+		osp_spin_lock(&d->mutex);
+
+		if (!find_node(current->pid, read_list))
+                {
+                	osp_spin_unlock(&d->mutex);
+                        //BURRITO what do return
+                }
+                //BURRITO check if has write lock - have to wait  
+		
+		delete_node(current->pid, read_list);
+		//BURRITO - delete out of write list
+
+		if (d->read_locks == 0 && d->write_lock == false)
+		{
+			filp->f_flags ^= F_OSPRD_LOCKED;
+		}		
+
+		osp_spin_unlock(&d->mutex);
+		wake_up_all(&d->blockq);
+		//r = -ENOTTY;
 
 	} else
 		r = -ENOTTY; /* unknown command */
