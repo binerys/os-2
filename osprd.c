@@ -501,20 +501,16 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Your code here (instead of the next line).
 		osp_spin_lock(&d->mutex);
 
-		if (!find_lock(current->pid, d->read_list))
-        {
-        	osp_spin_unlock(&d->mutex);
-            return -EINVAL;
-        }
-        else
-        {
+		if (!find_lock(current->pid, d->read_list) && !find_lock(current->pid, d->write_list))
+        	{
+        		osp_spin_unlock(&d->mutex);
+            		return -EINVAL;
+        	}
+        
         	delete_lock(current->pid, d->read_list);
-        } 
-
-        // TACO - CHECK THE WRITE LIST 
-        //  Fix write_lock check
+		delete_lock(current->pid, d->write_list);
 		
-		if (d->read_locks == 0 && d->write_lock == false)
+		if (!list_empty(d->read_list) && !list_empty(d->write_list))
 		{
 			filp->f_flags ^= F_OSPRD_LOCKED;
 		}		
