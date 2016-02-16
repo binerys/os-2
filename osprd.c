@@ -47,6 +47,17 @@ MODULE_AUTHOR("Breanna Nery & Garima Lunawat");
 static int nsectors = 32;
 module_param(nsectors, int, 0);
 
+struct lock_list
+{
+	struct list_head list; // List structure from list 
+	pid_t pid; // pid associated with lock
+};
+
+struct ticket_list
+{
+	struct list_head list; // List structure from list
+	unsigned ticket; // Ticket number
+};
 
 /* The internal representation of our device. */
 typedef struct osprd_info {
@@ -54,7 +65,7 @@ typedef struct osprd_info {
 	                                // (nsectors * SECTOR_SIZE) bytes.
 
 	osp_spinlock_t mutex;           // Mutex for synchronizing access to
-					// this block device
+									// this block device
 
 	unsigned ticket_head;		// Currently running ticket for
 					// the device lock
@@ -67,8 +78,16 @@ typedef struct osprd_info {
 
 	/* HINT: You may want to add additional fields to help
 	         in detecting deadlock. */
-	int read_locks; 
-	bool write_lock;
+
+	/* Lock Lists and Ticket Lists */
+	struct lock_list read_list_t; 
+	struct lock_list write_list_t;
+	struct ticket_list ticket_list_t;
+
+	/* Head pointers */
+	struct list_head* read_list; 
+	struct list_head* write_list;
+	struct list_head* ticket_list; 
 
 	// The following elements are used internally; you don't need
 	// to understand them.
@@ -84,25 +103,18 @@ static osprd_info_t osprds[NOSPRD];
 // Declare useful helper functions
 /* ---------------------------------------*/
 // LIST.H WRAPPER FUNCTIONS:
-// 	IMPORTANT: Use read_list as head pointer
-// 	add_node(cur_pid,head): add's a node with
+// 	IMPORTANT: Use d->[name]_list as head pointer
+// 	add_lock(cur_pid,head): add's a node with
 // 		the current pid
-// 	find_node(cur_pid,head): returns true if
+// 	find_lock(cur_pid,head): returns true if
 // 		cur_pid exists in list
-// 	delete_node(cur_pid,head): delete's node
+// 	delete_lock(cur_pid,head): delete's node
 // 		containing cur_pid
+// 	list_empty(head): function defined by
+// 		list.h.
 /*-----------------------------------------*/
 
-struct lock_list
-{
-	struct list_head list; // List structure from list 
-	pid_t pid; // pid associated with lock
-};
-
-struct list_head read_list; // Head of list for read locks
-LIST_HEAD(read_list); // Initialize head 
-
-void add_node(pid_t cur_pid, struct list_head *head)
+void add_lock(pid_t cur_pid, struct list_head *head)
 {
 	struct lock_list *tmp = (struct lock_list*) kmalloc(sizeof(struct lock_list), GFP_ATOMIC);
 	if(!tmp)
@@ -112,7 +124,17 @@ void add_node(pid_t cur_pid, struct list_head *head)
 	list_add(&tmp->list, head);
 }
 
-bool find_node(pid_t cur_pid, struct list_head *head)
+void add_ticket(unsigned cur_ticket, struct list_head *head)
+{
+	struct ticket_list *tmp = (struct ticket_list*) kmalloc(sizeof(struct ticket_list), GFP_ATOMIC);
+	if(!tmp)
+		eprintk("Unable to allocate a new node for read_list\n");
+	tmp->ticket = cur_ticket;
+	INIT_LIST_HEAD(&tmp->list);
+	list_add(&tmp->list, head);
+}
+
+bool find_lock(pid_t cur_pid, struct list_head *head)
 {
 	struct list_head *ptr; 
 	struct lock_list *obj; 
@@ -125,7 +147,21 @@ bool find_node(pid_t cur_pid, struct list_head *head)
 	return false; 
 }
 
-bool delete_node(pid_t cur_pid, struct list_head *head)
+bool find_ticket(unsigned cur_ticket, struct list_head *head)
+{
+	struct list_head *ptr; 
+	struct ticket_list *obj; 
+	list_for_each(ptr,head)
+	{
+		obj = list_entry(ptr, struct ticket_list, list);
+		if(obj->ticket == cur_ticket)
+			return true; 
+	}
+	return false; 
+}
+
+
+bool delete_lock(pid_t cur_pid, struct list_head *head)
 {
 	struct list_head *ptr; 
 	struct list_head *next_ptr;
@@ -140,6 +176,40 @@ bool delete_node(pid_t cur_pid, struct list_head *head)
 		}		
 	}
 	return false; 	
+}
+
+bool delete_ticket(unsigned cur_ticket, struct list_head *head)
+{
+	struct list_head *ptr; 
+	struct list_head *next_ptr;
+	struct ticket_list *obj; 
+	list_for_each_safe(ptr,next_ptr,head){
+		obj = list_entry(ptr, struct ticket_list, list);
+		if(obj->ticket == cur_ticket)
+		{
+			list_del(&obj->list);
+			kfree(obj);
+			return true;
+		}		
+	}
+	return false; 	
+}
+
+void updateTicketTail(osprd_info_t *d)
+{
+	d->ticket_tail++;
+	while(d->ticket_tail)
+	{
+		if(find_ticket(d->ticket_tail, d->ticket_list))
+		{
+			delete_ticket(d->ticket_tail, d->ticket_list);
+		}
+		else
+		{
+			break;
+		}
+		d->ticket_tail++;
+	}
 }
 
 /*
@@ -242,9 +312,8 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		if(filp->f_flags & F_OSPRD_LOCKED)
 		{
 			/* Check if a read lock exists */
-			if (delete_node(current->pid, &read_list))
-			{
-				
+			if (delete_lock(current->pid, d->read_list))
+			{	
 				d->read_locks--;
 			}
 			else
@@ -350,7 +419,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 						// osp_spin_lock(&d->mutex);
 						
 						/* Check if I'm requesting the same read lock*/
-						if (find_node(current->pid, &read_list)) 
+						if (find_lock(current->pid, d->read_list)) 
 						{
 							osp_spin_unlock(&d->mutex);
 							return -EDEADLK; 
@@ -365,7 +434,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 						// Grant lock 
 						filp->f_flags |= F_OSPRD_LOCKED; 
 						// Add to list
-						add_node(current->pid, &read_list);
+						add_lock(current->pid, d->read_list);
 
 						// Increment counters
 						d->read_locks++;
@@ -382,7 +451,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			default: /* OPENED FOR WRITING */
 
 				/* Check if I'm requesting a read lock */
-				if (find_node(current->pid, &read_list)) 
+				if (find_lock(current->pid, d->read_list)) 
 				{ 
 	                osp_spin_unlock(&d->mutex);
 	                return -EDEADLK; 
@@ -432,14 +501,14 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Your code here (instead of the next line).
 		osp_spin_lock(&d->mutex);
 
-		if (!find_node(current->pid, &read_list))
+		if (!find_lock(current->pid, d->read_list))
         {
         	osp_spin_unlock(&d->mutex);
             return -EINVAL;
         }
         else
         {
-        	delete_node(current->pid, &read_list);
+        	delete_lock(current->pid, d->read_list);
         } 
 
         // TACO - CHECK THE WRITE LIST 
@@ -468,8 +537,17 @@ static void osprd_setup(osprd_info_t *d)
 	osp_spin_lock_init(&d->mutex);
 	d->ticket_head = d->ticket_tail = 0;
 	/* Add code here if you add fields to osprd_info_t. */
+	
 	d->read_locks = 0;
 	d->write_lock = false;
+	
+	INIT_LIST_HEAD(&d->read_list_t.list);
+	INIT_LIST_HEAD(&d->write_list_t.list);
+	INIT_LIST_HEAD(&d->ticket_list_t.list);
+
+	d->read_list=&d->read_list_t.list;
+	d->write_list=&d->write_list_t.list;
+	d->ticket_list=&d->ticket_list_t.list;
 }
 
 
