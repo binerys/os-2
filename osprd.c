@@ -232,7 +232,6 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		// as appropriate.
 
 		// Your code here.
-
 		if (d == NULL) 
 		{
 			return 1;
@@ -242,26 +241,23 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		// Verify a lock exists:
 		if(filp->f_flags & F_OSPRD_LOCKED)
 		{
-			switch (filp_writable)
+			/* Check if a read lock exists */
+			if (delete_node(current->pid, &read_list))
 			{
-				case 0: /* READ LOCK */
-					if (delete_node(current -> pid, &read_list))
-					{
-						//but other read locks could still exist?
-						filp->f_flags ^= F_OSPRD_LOCKED;
-						d->read_locks--;
-					}
-					else
-					{
-						osp_spin_unlock(&d->mutex);
-						//BURRITO retrun what?
-					}
-					break;
-				default: /* WRITE LOCK */
-					//BURRITO just need to delete one node, right? - do we even keep track of it?
-					filp->f_flags ^= F_OSPRD_LOCKED;
-					d->write_lock = false;
+				
+				d->read_locks--;
 			}
+			else
+			{
+				osp_spin_unlock(&d->mutex);
+				return -EINVAL;
+			}
+
+			/* TACO Check if write lock exists */
+			
+			/* TACO Undo lock only if no read locks and write locks exist */
+				filp->f_flags ^= F_OSPRD_LOCKED;
+			d->write_lock = false;
 		}
 		osp_spin_unlock(&d->mutex);
 		wake_up_all(&d->blockq);
@@ -269,7 +265,6 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		(void) filp_writable, (void) d;
 
 	}
-
 	return 0;
 }
 
@@ -334,79 +329,84 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// be protected by a spinlock; which ones?)
 
 		// Your code here (instead of the next two lines).
-		unsigned local_ticket;
 
-		// ****** Critical section
+		/* Obtain a ticket */
+		unsigned local_ticket;
+		// Obtain a ticket
 		osp_spin_lock(&d->mutex);
+		// ****** Critical section
 		local_ticket = d->ticket_head;
 		d->ticket_head++;
-		osp_spin_unlock(&d->mutex);
 		// ***********************
+		osp_spin_unlock(&d->mutex); // MIGHT NOT BE SAFE 
+		
 		
 		switch(filp_writable)
 		{
 			case 0: /* OPENED FOR READING */
-				do
-				{
+		
 					if(d->write_lock == false && local_ticket <= d->ticket_tail)
 					{
-						osp_spin_lock(&d->mutex);
-
-						if (!find_node(current->pid, &read_list))
+						// osp_spin_lock(&d->mutex);
+						
+						/* Check if I'm requesting the same read lock*/
+						if (find_node(current->pid, &read_list)) 
 						{
 							osp_spin_unlock(&d->mutex);
-							//BURRITO what do return
-						}				
+							return -EDEADLK; 
+						}
+								
+						/* TACO Check if I'm requesting a write lock */	
 
-						//BURRITO check if has write lock - have to wait		
+						/* TACO Perform blocking */
 
-						// Give read lock
-						filp->f_flags |= F_OSPRD_LOCKED;
+						/* Give read lock */
+						osp_spin_lock(&d->mutex);
+						// Grant lock 
+						filp->f_flags |= F_OSPRD_LOCKED; 
+						// Add to list
+						add_node(current->pid, &read_list);
+
 						// Increment counters
 						d->read_locks++;
-						d->ticket_tail++;
+
+						/* TACO Update ticketing process*/
+						//d->ticket_tail++;
 						osp_spin_unlock(&d->mutex);
+						wake_up_all(&d->blockq);
 
 						r=0;
 					}
-					else
-						schedule();
-
-				}while(d->write_lock == true && local_ticket > d->ticket_tail);
 				break;
+
 			default: /* OPENED FOR WRITING */
-				do
-				{
-					if(d->read_locks == 0 && d->write_lock == false && local_ticket <= d->ticket_tail)
-					{
-						osp_spin_lock(&d->mutex);
 
-						if (!find_node(current->pid, &read_list))
-						{ 
-                                                        osp_spin_unlock(&d->mutex);
-                                                        //BURRITO what do return
-                                                } 
+				/* Check if I'm requesting a read lock */
+				if (find_node(current->pid, &read_list)) 
+				{ 
+	                osp_spin_unlock(&d->mutex);
+	                return -EDEADLK; 
+	            } 
 
-                                                //BURRITO check if has write lock - have to wait     
+	            /*TACO Check if I'm requesting the same write lock */  
 
-						// Give write lock 
-						filp->f_flags |= F_OSPRD_LOCKED;
-						// Increment counters
-						d->write_lock = true;
-						d->ticket_tail++;
-						osp_spin_unlock(&d->mutex);
+	            /* TACO Perform blocking */
 
-						r = 0;
-					}
-					else
-						schedule();
-
-				} while(d->read_locks != 0 && d->write_lock == true && local_ticket > d->ticket_tail);
-
+	            osp_spin_lock(&d->mutex);
+				// Give write lock 
+				filp->f_flags |= F_OSPRD_LOCKED;
+				// TACO Add to write list
+		
+				// TACO Manage tickets
+				// Increment counters
+				// d->write_lock = true;
+				// d->ticket_tail++;
+				osp_spin_unlock(&d->mutex);
+				wake_up_all(&d->blockq);
+				r = 0;
+					
 		}
 		eprintk("Attempting to acquire\n");
-		//r = -ENOTTY;
-
 	} else if (cmd == OSPRDIOCTRYACQUIRE) {
 
 		// EXERCISE: ATTEMPT to lock the ramdisk.
@@ -433,15 +433,18 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		osp_spin_lock(&d->mutex);
 
 		if (!find_node(current->pid, &read_list))
-                {
-                	osp_spin_unlock(&d->mutex);
-                        //BURRITO what do return
-                }
-                //BURRITO check if has write lock - have to wait  
-		
-		delete_node(current->pid, &read_list);
-		//BURRITO - delete out of write list
+        {
+        	osp_spin_unlock(&d->mutex);
+            return -EINVAL;
+        }
+        else
+        {
+        	delete_node(current->pid, &read_list);
+        } 
 
+        // TACO - CHECK THE WRITE LIST 
+        //  Fix write_lock check
+		
 		if (d->read_locks == 0 && d->write_lock == false)
 		{
 			filp->f_flags ^= F_OSPRD_LOCKED;
@@ -449,7 +452,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 		osp_spin_unlock(&d->mutex);
 		wake_up_all(&d->blockq);
-		//r = -ENOTTY;
 
 	} else
 		r = -ENOTTY; /* unknown command */
