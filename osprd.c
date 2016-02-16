@@ -466,6 +466,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				{
 					osp_spin_unlock(&d->mutex);
 					return -EDEADLK;
+
 				}
 	        	osp_spin_unlock(&d->mutex);
 	        	eprintk("Local ticket is (reading): %d \n",local_ticket);
@@ -556,8 +557,96 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Otherwise, if we can grant the lock request, return 0.
 
 		// Your code here (instead of the next two lines).
+		/* Obtain a ticket */
+                unsigned local_ticket;
+                // Obtain a ticket
+                osp_spin_lock(&d->mutex);
+                // ****** Critical section
+                local_ticket = d->ticket_head;
+                d->ticket_head++;
+                // ***********************
+              
+		switch(filp_writable)
+		{
+			case 0: /* OPENED FOR READING */
+					//osp_spin_lock(&d->mutex);
+
+					 /* Check if I'm requesting the same read lock*/
+                                        if (find_lock(current->pid, d->read_list))
+                                        {
+                                              osp_spin_unlock(&d->mutex);
+						updateTicketTail(d);
+                                                return -EBUSY;
+                                        }
+
+                                        /* Check if I'm requesting a write lock */
+                                        if (find_lock(current->pid, d->write_list))
+                                        {
+                                                osp_spin_unlock(&d->mutex);
+						updateTicketTail(d);
+                                                return -EBUSY;
+                                        }
+
+					if (!list_empty(d->write_list))
+					{
+						updateTicketTail(d);
+						return -EBUSY;	
+					}
+					osp_spin_unlock(&d->mutex);
+					
+					 /* Give read lock */
+	                osp_spin_lock(&d->mutex);
+	                // Grant lock 
+	                filp->f_flags |= F_OSPRD_LOCKED;
+	                // Add to list
+	                add_lock(current->pid, d->read_list);
+	                /* Update ticket tail */
+	                updateTicketTail(d);
+	                osp_spin_unlock(&d->mutex);
+	                wake_up_all(&d->blockq);
+	                r = 0;
+				break;
+			default:
+				 osp_spin_lock(&d->mutex);
+
+                                 /* Check if I'm requesting a read lock*/
+                                if (find_lock(current->pid, d->read_list))
+                        	{
+    	                        	osp_spin_unlock(&d->mutex);
+                                        updateTicketTail(d);
+                                        return -EBUSY;
+                                }
+				/* Check if I'm requesting the same write lock */
+                                if (find_lock(current->pid, d->write_list))
+                                {
+                                	osp_spin_unlock(&d->mutex);
+                                        updateTicketTail(d);
+                                        return -EBUSY;
+                                }
+				osp_spin_unlock(&d->mutex);
+				if (!list_empty(d->read_list) || !list_empty(d->write_list))
+				{
+					updateTicketTail(d);
+					return -EBUSY;
+				}
+				
+				/* Give write lock */
+                                osp_spin_lock(&d->mutex);
+                                // Grant lock 
+                                filp->f_flags |= F_OSPRD_LOCKED;
+                                // Add to list
+                                add_lock(current->pid, d->read_list);
+                                /* Update ticket tail */
+                                updateTicketTail(d);
+                                osp_spin_unlock(&d->mutex);
+                                wake_up_all(&d->blockq);
+                                r = 0;				
+
+				break;	
+		}		
+
 		eprintk("Attempting to try acquire\n");
-		r = -ENOTTY;
+		//r = -ENOTTY;
 
 	} else if (cmd == OSPRDIOCRELEASE) {
 
