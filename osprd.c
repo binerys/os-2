@@ -441,7 +441,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		{
 			case 0: /* OPENED FOR READING */
 		
-				if(d->write_lock == false && local_ticket <= d->ticket_tail)
+				if(list_empty(d->write_list) && local_ticket <= d->ticket_tail)
 				{
 					// osp_spin_lock(&d->mutex);
 					
@@ -460,8 +460,20 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					}
 
 					/* Perform blocking */
-					if(block(d), local_ticket)
+					if(wait_event_interruptible(d->blockq, 
+					list_empty(d->write_list) && 
+					list_empty(d->read_list) && 
+					(local_ticket == d->ticket_tail)
+					))
+					{	
+						/* Handle signals */
+						if(local_ticket == d->ticket_tail)
+							updateTicketTail(d);
+						else
+							add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
+
 						return -ERESTARTSYS;
+					}
 					/* Give read lock */
 					osp_spin_lock(&d->mutex);
 					// Grant lock 
@@ -471,7 +483,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					/* Update ticket tail */
 					updateTicketTail(d);
 					osp_spin_unlock(&d->mutex);
-
 					wake_up_all(&d->blockq);
 					r=0;
 				}
@@ -487,21 +498,33 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 	            } 
 
 	            /* Check if I'm requesting the same write lock */  
-	            if (find_lock(current->, d->write_list))
+	            if (find_lock(current->pid, d->write_list))
 	            {
 	            	// osp_spin_unlock (&d->mutex);
 	            	return -EDEADLK;
 	            }
 
 	            /* Perform blocking */
-				if(block(d), local_ticket)
+				if(wait_event_interruptible(d->blockq, 
+				list_empty(d->write_list) && 
+				list_empty(d->read_list) && 
+				(local_ticket == d->ticket_tail)
+				))
+				{	
+					/* Handle signals */
+					if(local_ticket == d->ticket_tail)
+						updateTicketTail(d);
+					else
+						add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
+
 					return -ERESTARTSYS;
+				}
 
 	            osp_spin_lock(&d->mutex);
 				// Give write lock 
 				filp->f_flags |= F_OSPRD_LOCKED;
 				// Add to write list
-				add_lock(pid->current, d->write_list);
+				add_lock(current->pid, d->write_list);
 				// Update ticket tail
 				updateTicketTail(d);
 				osp_spin_unlock(&d->mutex);
