@@ -80,9 +80,9 @@ typedef struct osprd_info {
 	         in detecting deadlock. */
 
 	/* Lock Lists and Ticket Lists */
-	struct lock_list read_list_t; 
-	struct lock_list write_list_t;
-	struct ticket_list ticket_list_t;
+	struct lock_list read_list_t; // List of read locks
+	struct lock_list write_list_t; // List of write locks
+	struct ticket_list ticket_list_t; // List of trashed tickets
 
 	/* Head pointers */
 	struct list_head* read_list; 
@@ -112,6 +112,8 @@ static osprd_info_t osprds[NOSPRD];
 // 		containing cur_pid
 // 	list_empty(head): function defined by
 // 		list.h.
+// 	updateTicketTail(d): updates ticket tail to next
+// 		available ticket
 /*-----------------------------------------*/
 
 void add_lock(pid_t cur_pid, struct list_head *head)
@@ -210,6 +212,32 @@ void updateTicketTail(osprd_info_t *d)
 		}
 		d->ticket_tail++;
 	}
+}
+
+/*
+* block(d)
+* 	Given a device d, block until conditions are met.
+* 	If condition fails and a signal is caught, return -ERESTARTSYS
+* 	Else, return 0.
+*/
+int block(osprd_info_t *d, unsigned local_ticket)
+{
+	if(wait_event_interruptible(d->blockq, 
+	(list_empty(d->write_list) && 
+	list_empty(d->read_list) && 
+	(local_ticket == d->ticket_tail)) 
+	== -ERESTARTSYS
+	))
+	{	
+		/* Handle signals */
+		if(local_ticket == d->ticket_tail)
+			updateTicketTail(d);
+		else
+			add_ticket(d->ticket_tail, d->ticket_list); // Trash ticket
+
+		return -ERESTARTSYS;
+	}
+	return 0;
 }
 
 /*
@@ -407,45 +435,46 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		local_ticket = d->ticket_head;
 		d->ticket_head++;
 		// ***********************
-		osp_spin_unlock(&d->mutex); // MIGHT NOT BE SAFE 
-		
+		osp_spin_unlock(&d->mutex); //  [*] MIGHT NOT BE SAFE 
 		
 		switch(filp_writable)
 		{
 			case 0: /* OPENED FOR READING */
 		
-					if(d->write_lock == false && local_ticket <= d->ticket_tail)
+				if(d->write_lock == false && local_ticket <= d->ticket_tail)
+				{
+					// osp_spin_lock(&d->mutex);
+					
+					/* Check if I'm requesting the same read lock*/
+					if (find_lock(current->pid, d->read_list)) 
 					{
-						// osp_spin_lock(&d->mutex);
-						
-						/* Check if I'm requesting the same read lock*/
-						if (find_lock(current->pid, d->read_list)) 
-						{
-							osp_spin_unlock(&d->mutex);
-							return -EDEADLK; 
-						}
-								
-						/* TACO Check if I'm requesting a write lock */	
-
-						/* TACO Perform blocking */
-
-						/* Give read lock */
-						osp_spin_lock(&d->mutex);
-						// Grant lock 
-						filp->f_flags |= F_OSPRD_LOCKED; 
-						// Add to list
-						add_lock(current->pid, d->read_list);
-
-						// Increment counters
-						d->read_locks++;
-
-						/* TACO Update ticketing process*/
-						//d->ticket_tail++;
-						osp_spin_unlock(&d->mutex);
-						wake_up_all(&d->blockq);
-
-						r=0;
+						// Uncomment if i remove [*] osp_spin_unlock(&d->mutex);
+						return -EDEADLK; 
 					}
+							
+					/* Check if I'm requesting a write lock */	
+					if (find_lock(current->pid, d->write_list))
+					{
+						// osp_spin_unlock(&d->mutex);
+						return -EDEADLK;
+					}
+
+					/* Perform blocking */
+					if(block(d), local_ticket)
+						return -ERESTARTSYS;
+					/* Give read lock */
+					osp_spin_lock(&d->mutex);
+					// Grant lock 
+					filp->f_flags |= F_OSPRD_LOCKED; 
+					// Add to list
+					add_lock(current->pid, d->read_list);
+					/* Update ticket tail */
+					updateTicketTail(d);
+					osp_spin_unlock(&d->mutex);
+
+					wake_up_all(&d->blockq);
+					r=0;
+				}
 				break;
 
 			default: /* OPENED FOR WRITING */
@@ -453,23 +482,28 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				/* Check if I'm requesting a read lock */
 				if (find_lock(current->pid, d->read_list)) 
 				{ 
-	                osp_spin_unlock(&d->mutex);
+	                // osp_spin_unlock(&d->mutex);
 	                return -EDEADLK; 
 	            } 
 
-	            /*TACO Check if I'm requesting the same write lock */  
+	            /* Check if I'm requesting the same write lock */  
+	            if (find_lock(current->, d->write_list))
+	            {
+	            	// osp_spin_unlock (&d->mutex);
+	            	return -EDEADLK;
+	            }
 
-	            /* TACO Perform blocking */
+	            /* Perform blocking */
+				if(block(d), local_ticket)
+					return -ERESTARTSYS;
 
 	            osp_spin_lock(&d->mutex);
 				// Give write lock 
 				filp->f_flags |= F_OSPRD_LOCKED;
-				// TACO Add to write list
-		
-				// TACO Manage tickets
-				// Increment counters
-				// d->write_lock = true;
-				// d->ticket_tail++;
+				// Add to write list
+				add_lock(pid->current, d->write_list);
+				// Update ticket tail
+				updateTicketTail(d);
 				osp_spin_unlock(&d->mutex);
 				wake_up_all(&d->blockq);
 				r = 0;
@@ -532,11 +566,7 @@ static void osprd_setup(osprd_info_t *d)
 	init_waitqueue_head(&d->blockq);
 	osp_spin_lock_init(&d->mutex);
 	d->ticket_head = d->ticket_tail = 0;
-	/* Add code here if you add fields to osprd_info_t. */
-	
-	d->read_locks = 0;
-	d->write_lock = false;
-	
+	/* Add code here if you add fields to osprd_info_t. */	
 	INIT_LIST_HEAD(&d->read_list_t.list);
 	INIT_LIST_HEAD(&d->write_list_t.list);
 	INIT_LIST_HEAD(&d->ticket_list_t.list);
